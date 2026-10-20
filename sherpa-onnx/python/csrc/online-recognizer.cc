@@ -236,6 +236,8 @@ void PybindOnlineRecognizer(py::module *m) {
           py::call_guard<py::gil_scoped_release>())
       .def("is_ready", &PyClass::IsReady, kIsReadyDoc,
            py::call_guard<py::gil_scoped_release>())
+      .def("loaded_runtime_readback", &PyClass::LoadedRuntimeReadback, py::arg("s"),
+           py::call_guard<py::gil_scoped_release>())
       .def("decode_stream", &PyClass::DecodeStream, py::arg("s"),
            kDecodeStreamDoc,
            py::call_guard<py::gil_scoped_release>())

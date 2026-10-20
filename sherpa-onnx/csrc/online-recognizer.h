@@ -169,6 +169,8 @@ class OnlineRecognizer {
 
   ~OnlineRecognizer();
 
+  std::string LoadedRuntimeReadback(OnlineStream* stream) const;
+
   /// Create a stream for decoding.
   std::unique_ptr<OnlineStream> CreateStream() const;
 

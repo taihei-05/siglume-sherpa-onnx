@@ -6,6 +6,7 @@
 #define SHERPA_ONNX_CSRC_ONLINE_RECOGNIZER_IMPL_H_
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,10 @@ class OnlineRecognizerImpl {
       Manager *mgr, const OnlineRecognizerConfig &config);
 
   virtual ~OnlineRecognizerImpl() = default;
+
+  virtual std::string LoadedRuntimeReadback(OnlineStream*) const {
+    throw std::runtime_error("loaded runtime readback is only implemented for NeMo");
+  }
 
   virtual std::unique_ptr<OnlineStream> CreateStream() const = 0;
 

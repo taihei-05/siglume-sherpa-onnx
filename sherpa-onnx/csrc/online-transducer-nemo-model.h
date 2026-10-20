@@ -28,6 +28,7 @@ class OnlineTransducerNeMoModel {
   OnlineTransducerNeMoModel(Manager *mgr, const OnlineModelConfig &config);
 
   ~OnlineTransducerNeMoModel();
+  std::string LoadedRuntimeReadback() const;
   // A list of 3 tensors:
   //  - cache_last_channel
   //  - cache_last_time

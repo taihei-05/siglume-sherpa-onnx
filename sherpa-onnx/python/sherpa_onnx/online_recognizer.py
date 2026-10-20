@@ -1216,3 +1216,7 @@ class OnlineRecognizer(object):
           True if the stream was successfully reset.
         """
         return self.recognizer.reset(s)
+
+    def loaded_runtime_readback(self, s: OnlineStream) -> str:
+        """Read native NeMo sessions and the selected stream; no start authority."""
+        return self.recognizer.loaded_runtime_readback(s)

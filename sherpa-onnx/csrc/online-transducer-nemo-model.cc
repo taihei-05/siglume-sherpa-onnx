@@ -30,6 +30,7 @@
 #include "nlohmann/json.hpp"
 #include "sherpa-onnx/csrc/cat.h"
 #include "sherpa-onnx/csrc/file-utils.h"
+#include "sherpa-onnx/csrc/loaded-runtime-readback.h"
 #include "sherpa-onnx/csrc/macros.h"
 #include "sherpa-onnx/csrc/online-transducer-decoder.h"
 #include "sherpa-onnx/csrc/onnx-utils.h"
@@ -146,17 +147,16 @@ class OnlineTransducerNeMoModel::Impl {
         env_(CreateOrtEnv()),
         sess_opts_(GetSessionOptions(config)),
         allocator_{} {
-    encoder_sess_ = std::make_unique<Ort::Session>(
-        env_, SHERPA_ONNX_TO_ORT_PATH(config.transducer.encoder), sess_opts_);
-    InitEncoder(nullptr, 0);
-
-    decoder_sess_ = std::make_unique<Ort::Session>(
-        env_, SHERPA_ONNX_TO_ORT_PATH(config.transducer.decoder), sess_opts_);
-    InitDecoder(nullptr, 0);
-
-    joiner_sess_ = std::make_unique<Ort::Session>(
-        env_, SHERPA_ONNX_TO_ORT_PATH(config.transducer.joiner), sess_opts_);
-    InitJoiner(nullptr, 0);
+    {
+      auto bytes = ReadFile(config.transducer.encoder);
+      InitEncoder(bytes.data(), bytes.size());
+    }
+    {
+      auto bytes = ReadFile(config.transducer.decoder);
+      InitDecoder(bytes.data(), bytes.size());
+    }
+    auto bytes = ReadFile(config.transducer.joiner);
+    InitJoiner(bytes.data(), bytes.size());
   }
 
   template <typename Manager>
@@ -177,6 +177,21 @@ class OnlineTransducerNeMoModel::Impl {
 
     auto buf = ReadFile(mgr, config.transducer.joiner);
     InitJoiner(buf.data(), buf.size());
+  }
+
+  std::string LoadedRuntimeReadback() const {
+    nlohmann::json result = {
+        {"encoder", {{"sha256", encoder_hash_}, {"size_bytes", encoder_size_},
+                     {"session", LoadedSessionReadback(*encoder_sess_)}}},
+        {"decoder", {{"sha256", decoder_hash_}, {"size_bytes", decoder_size_},
+                     {"session", LoadedSessionReadback(*decoder_sess_)}}},
+        {"joiner", {{"sha256", joiner_hash_}, {"size_bytes", joiner_size_},
+                    {"session", LoadedSessionReadback(*joiner_sess_)}}},
+        {"chunk_size", window_size_}, {"chunk_shift", chunk_shift_},
+        {"subsampling_factor", subsampling_factor_}, {"vocab_size", vocab_size_},
+        {"feature_dim", feat_dim_}, {"normalization", normalize_type_},
+        {"multilingual", is_multilingual_}};
+    return result.dump();
   }
 
   std::vector<Ort::Value> RunEncoder(
@@ -440,6 +455,9 @@ class OnlineTransducerNeMoModel::Impl {
 
  private:
   void InitEncoder(void *model_data, size_t model_data_length) {
+    if (!model_data || !model_data_length) throw std::runtime_error("loaded encoder buffer missing");
+    encoder_hash_ = LoadedBufferSha256(model_data, model_data_length);
+    encoder_size_ = model_data_length;
     if (model_data) {
       encoder_sess_ = std::make_unique<Ort::Session>(
           env_, model_data, model_data_length, sess_opts_);
@@ -580,6 +598,9 @@ class OnlineTransducerNeMoModel::Impl {
   }
 
   void InitDecoder(void *model_data, size_t model_data_length) {
+    if (!model_data || !model_data_length) throw std::runtime_error("loaded decoder buffer missing");
+    decoder_hash_ = LoadedBufferSha256(model_data, model_data_length);
+    decoder_size_ = model_data_length;
     if (model_data) {
       decoder_sess_ = std::make_unique<Ort::Session>(
           env_, model_data, model_data_length, sess_opts_);
@@ -616,6 +637,9 @@ class OnlineTransducerNeMoModel::Impl {
   }
 
   void InitJoiner(void *model_data, size_t model_data_length) {
+    if (!model_data || !model_data_length) throw std::runtime_error("loaded joiner buffer missing");
+    joiner_hash_ = LoadedBufferSha256(model_data, model_data_length);
+    joiner_size_ = model_data_length;
     if (model_data) {
       joiner_sess_ = std::make_unique<Ort::Session>(
           env_, model_data, model_data_length, sess_opts_);
@@ -642,6 +666,8 @@ class OnlineTransducerNeMoModel::Impl {
   std::unique_ptr<Ort::Session> encoder_sess_;
   std::unique_ptr<Ort::Session> decoder_sess_;
   std::unique_ptr<Ort::Session> joiner_sess_;
+  std::string encoder_hash_, decoder_hash_, joiner_hash_;
+  size_t encoder_size_ = 0, decoder_size_ = 0, joiner_size_ = 0;
 
   std::vector<std::string> encoder_input_names_;
   std::vector<const char *> encoder_input_names_ptr_;
@@ -702,6 +728,10 @@ OnlineTransducerNeMoModel::OnlineTransducerNeMoModel(
     : impl_(std::make_unique<Impl>(mgr, config)) {}
 
 OnlineTransducerNeMoModel::~OnlineTransducerNeMoModel() = default;
+
+std::string OnlineTransducerNeMoModel::LoadedRuntimeReadback() const {
+  return impl_->LoadedRuntimeReadback();
+}
 
 std::vector<Ort::Value> OnlineTransducerNeMoModel::RunEncoder(
     Ort::Value features, std::vector<Ort::Value> states,

@@ -19,6 +19,8 @@
 #include <vector>
 
 #include "sherpa-onnx/csrc/macros.h"
+#include "sherpa-onnx/csrc/file-utils.h"
+#include "sherpa-onnx/csrc/loaded-runtime-readback.h"
 #include "sherpa-onnx/csrc/online-recognizer-impl.h"
 #include "sherpa-onnx/csrc/online-recognizer.h"
 #include "sherpa-onnx/csrc/online-transducer-greedy-search-nemo-decoder.h"
@@ -45,10 +47,10 @@ class OnlineRecognizerTransducerNeMoImpl : public OnlineRecognizerImpl {
         model_(
             std::make_unique<OnlineTransducerNeMoModel>(config.model_config)) {
     if (!config.model_config.tokens_buf.empty()) {
-      symbol_table_ = SymbolTable(config.model_config.tokens_buf, false);
+      LoadTokens(config.model_config.tokens_buf);
     } else {
-      /// assuming tokens_buf and tokens are guaranteed not being both empty
-      symbol_table_ = SymbolTable(config.model_config.tokens, true);
+      auto bytes = ReadFile(config.model_config.tokens);
+      LoadTokens(std::string(bytes.begin(), bytes.end()));
     }
 
     if (config.decoding_method == "greedy_search") {
@@ -71,9 +73,10 @@ class OnlineRecognizerTransducerNeMoImpl : public OnlineRecognizerImpl {
         model_(std::make_unique<OnlineTransducerNeMoModel>(
             mgr, config.model_config)) {
     if (!config.model_config.tokens_buf.empty()) {
-      symbol_table_ = SymbolTable(config.model_config.tokens_buf, false);
+      LoadTokens(config.model_config.tokens_buf);
     } else {
-      symbol_table_ = SymbolTable(mgr, config.model_config.tokens);
+      auto bytes = ReadFile(mgr, config.model_config.tokens);
+      LoadTokens(std::string(bytes.begin(), bytes.end()));
     }
     if (config.decoding_method == "greedy_search") {
       decoder_ = std::make_unique<OnlineTransducerGreedySearchNeMoDecoder>(
@@ -91,6 +94,34 @@ class OnlineRecognizerTransducerNeMoImpl : public OnlineRecognizerImpl {
     auto stream = std::make_unique<OnlineStream>(config_.feat_config);
     InitOnlineStream(stream.get());
     return stream;
+  }
+
+  std::string LoadedRuntimeReadback(OnlineStream* stream) const override {
+    if (!stream || !model_->IsMultilingual()) {
+      throw std::runtime_error("loaded NeMo multilingual stream is required");
+    }
+    const auto& feature = config_.feat_config;
+    const auto prompt_ids = GetLanguagePromptIds(&stream, 1);
+    nlohmann::json result = {
+        {"schema", "siglume.nemotron_loaded_runtime.v1"},
+        {"model", nlohmann::json::parse(model_->LoadedRuntimeReadback())},
+        {"tokens", {{"sha256", tokens_hash_}, {"size_bytes", tokens_size_}}},
+        {"recognizer", {{"decoding_method", config_.decoding_method},
+                        {"blank_penalty", config_.blank_penalty},
+                        {"enable_endpoint", config_.enable_endpoint},
+                        {"endpoint_config", config_.endpoint_config.ToString()}}},
+        {"features", {{"sampling_rate", feature.sampling_rate},
+                      {"feature_dim", feature.feature_dim},
+                      {"low_freq", feature.low_freq}, {"high_freq", feature.high_freq},
+                      {"dither", feature.dither}, {"normalize_samples", feature.normalize_samples},
+                      {"snip_edges", feature.snip_edges}, {"frame_shift_ms", feature.frame_shift_ms},
+                      {"frame_length_ms", feature.frame_length_ms}, {"is_librosa", feature.is_librosa},
+                      {"remove_dc_offset", feature.remove_dc_offset}, {"preemph_coeff", feature.preemph_coeff},
+                      {"window_type", feature.window_type}, {"nemo_normalize_type", feature.nemo_normalize_type},
+                      {"round_to_power_of_two", feature.round_to_power_of_two},
+                      {"stream_feature_dim", stream->FeatureDim()}}},
+        {"language", {{"option", stream->GetOption("language")}, {"prompt_id", prompt_ids.at(0)}}}};
+    return result.dump();
   }
 
   bool IsReady(OnlineStream *s) const override {
@@ -222,6 +253,15 @@ class OnlineRecognizerTransducerNeMoImpl : public OnlineRecognizerImpl {
   }
 
  private:
+  void LoadTokens(const std::string& bytes) {
+    if (bytes.empty()) throw std::runtime_error("loaded token buffer is empty");
+    tokens_hash_ = LoadedBufferSha256(bytes.data(), bytes.size());
+    tokens_size_ = bytes.size();
+    symbol_table_ = SymbolTable(bytes, false);
+  }
+  std::string tokens_hash_;
+  size_t tokens_size_ = 0;
+
   static bool IsLanguageTagToken(const std::string &sym) {
     if (sym.size() < 4 || sym.front() != '<' || sym.back() != '>') {
       return false;

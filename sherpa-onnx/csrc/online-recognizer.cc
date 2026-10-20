@@ -228,6 +228,10 @@ OnlineRecognizer::OnlineRecognizer(Manager *mgr,
 
 OnlineRecognizer::~OnlineRecognizer() = default;
 
+std::string OnlineRecognizer::LoadedRuntimeReadback(OnlineStream* stream) const {
+  return impl_->LoadedRuntimeReadback(stream);
+}
+
 std::unique_ptr<OnlineStream> OnlineRecognizer::CreateStream() const {
   return impl_->CreateStream();
 }
